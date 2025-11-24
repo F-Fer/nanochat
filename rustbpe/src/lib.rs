@@ -153,3 +153,101 @@ fn count_pairs_parallel(
 
 // ----------- end helpers -----------
 
+impl Tokenizer {
+    // Core imcremental BPE training given unique words and their counts
+    // 'words': one entry per unique chunk (Vec<u32> of token-ids/bytes).
+    // 'counts': sane length as 'words', count per chunk.
+    fn train_core_incremental(&mut self, mut words: Vec<Word>, counts: Vec<i32>, vocab_size: u32) {
+        assert!(vocab_size >= 256, "vocab_size must be at least 256");
+        let num_merges = vocab_size - 256;
+        log::info!("Starting BPE training: {} merges to compute", num_merges);
+        self.merges.clear();
+
+        // Initial pair_counts and where_to_update (parallel)
+        log::info!("Computing initial pair counts from {} unique sequences", words.len());
+        let (mut pair_counts, mut where_to_update) = count_pairs_parallel(&words, &counts);
+
+        // Build heap
+        log::info!("Building heap with {} unique pairs", pair_counts.len());
+        let mut heap = OctonaryHeap::with_capacity(pair_counts.len());
+        for (pair, pos) in where_to_update.drain() {
+            let c = *pair_counts.get(&pair).unwrap_or(&0);
+            if c > 0 {
+                heap.push(MergeJob {
+                    pair,
+                    count: c as u64,
+                    pos,
+                });
+            }
+        }
+
+        // Merge loop
+        log::info!("Starting merge loop");
+        let mut merges_done = 0u32;
+        let mut last_log_percent = 0u32;
+
+        while merges_done < num_merges {
+            let Some(mut top) = heap.pop() else { break; };
+
+            // Lazy refresh
+            let current = *pair_counts.get(&top.pair).unwrap_or(&0);
+            if top.count != current as u64 {
+                top.count = current as u64;
+                if top.count > 0 {
+                    heap.push(top);
+                }
+                continue;
+            }
+            if top.count == 0 {
+                break;
+            }
+
+            // Record merge
+            let new_id = 256 + merges_done;
+            self.merges.insert(top.pair, new_id);
+
+            // Merge this pair in all words where it occurs
+            let mut local_pos_updates:  AHashMap<Pair, AHashSet<usize>> = AHashMap::new();
+            for &word_idx in &top.pos {
+                // Apply merge to this word and collect pair-count deltas
+                let changes = words[word_idx].merge_pair(top.pair, new_id);
+                // Update global pair counts based on this word's count
+                for (pair, delta) in changes {
+                    let delta_total = delta * counts[word_idx];
+                    if delta_total != 0 {
+                        *pair_counts.entry(pair).or_default() += delta_total;
+                        if delta > 0 {
+                            local_pos_updates.entry(pair).or_default().insert(word_idx);
+                        }
+                    }
+                }
+            }
+
+            // Add the updated pair counts back to the heap
+            for (pair, pos) in local_pos_updates {
+                let cnt = *pair_counts.get(&pair).unwrap_or(&0);
+                if cnt > 0 {
+                    heap.push(MergeJob {
+                        pair,
+                        count: cnt as u64,
+                        pos,
+                    });
+                }
+            }
+
+            merges_done += 1;
+
+            // Log progress every 1%
+            let current_percent = (merges_done * 100) / num_merges;
+            if current_percent > last_log_percent {
+                log::info!(
+                    "Progress: {}% ({}/{} merges) - Last merge: {:?} -> {} (frequency: {})",
+                    current_percent, merges_done, num_merges, top.pair, new_id, top.count 
+                );
+                last_log_percent = current_percent;
+            }
+        }
+
+        log::info!("Finished training: {} merges completed", merges_done);
+    }
+}
