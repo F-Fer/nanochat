@@ -251,3 +251,141 @@ impl Tokenizer {
         log::info!("Finished training: {} merges completed", merges_done);
     }
 }
+
+/// Public methods for the Tokenizer class that will be exposed to Python.
+#[pymethods]
+impl Tokenizer {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            merges: StdHashMap::new(),
+            pattern: String::new(),
+            compiled_pattern: Regex::new("").expect("Empty regex should be valid"),
+        }
+    }
+
+    /// train for streaming iterator (parallel ingestion).
+    /// We refill a Rust Vec<String> buffer under the GIL, then release the GIL
+    /// to do the heavy splitting and counting in parallel with rayon.
+    #[pyo3(signature = (iterator, vocab_size, buffer_size=8192, pattern=None))]
+    #[pyo3(text_signature = "(self, iterator, vocab_size, buffer_size=8192, pattern=None)")]
+    pub fn train_from_iterator(
+        &mut self, 
+        py: pyo3::Python<'_>,
+        iterator: &pyo3::Bound<'_, pyo3::PyAny>,
+        vocab_size: u32,
+        buffer_size: usize,
+        pattern: Option<String>,
+    ) -> PyResult<()> {
+        // Use provided pattern or default to GPT-4 pattern
+        let pattern_str = pattern.unwrap_or_else(|| GPT4_PATTERN.to_string());
+
+        // Update the stored pattern or default to GPT-4 pattern
+        self.pattern = pattern_str.clone();
+        self.compiled_pattern = Regex::new(&pattern_str)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e)))?;
+
+        // Prepare the true Python iterator object
+        let py_iter: pyo3::Py<pyo3::PyAny> = unsafe {
+            pyo3::Py::from_owned_ptr_or_err(py, pyo3::ffi::PyObject_GetIter(iterator.as_ptr()))?
+        };
+
+        // Global chunk counts
+        let mut counts: AHashMap<CompactString, i32> = AHashMap::new();
+
+        // Temporary buffer we refill under the GIL
+        let mut buf: Vec<String> = Vec::with_capacity(buffer_size);
+
+        log::info!("Processing sequences from iterator (buffer_size: {})", buffer_size);
+        let mut total_sequences = 0u64;
+
+        // Helper: refill 'buf' with up to 'buffer_size' strings from the Python iterator.
+        // Returns Ok(true) if the iterator is exhausted, Ok(false) otherwise.
+        let refill = |buf: &mut Vec<String>| -> PyResult<bool> {
+            pyo3::Python::with_gil(|py| {
+                buf.clear();
+                let it = py_iter.bind(py);
+                loop {
+                    if buf.len() >= buffer_size {
+                        return Ok(false);
+                    }
+                    // next(it)
+                    let next_obj = unsafe {
+                        pyo3::Bound::from_owned_ptr_or_opt(py, pyo3::ffi::PyIter_Next(it.as_ptr()))
+                    };
+                    match next_obj {
+                        Some(obj) => {
+                            let s: String = obj.extract()?;
+                            buf.push(s);
+                        }
+                        None => {
+                            if pyo3::PyErr::occurred(py) {
+                                return Err(pyo3::PyErr::fetch(py))
+                            } else {
+                                return Ok(true); // exhausted
+                            }
+                        }
+                    }
+                }
+            })
+        };
+
+        // Stream ingestion loop: refill under GIL, process without GIL (parallel)
+        loop {
+            let exhausted = refill(&mut buf)?;
+            if buf.is_empty() && exhausted {
+                break;
+            }
+
+            total_sequences += buf.len() as u64;
+
+            let pattern = self.compiled_pattern.clone();
+            let local: AHashMap<CompactString, i32> = py.allow_threads(|| {
+                buf.par_iter()
+                    .map(|s| {
+                        let mut m: AHashMap<CompactString, i32> = AHashMap::new();
+                        for mat in pattern.find_iter(s) {
+                            let piece = mat.expect("regex match failed").as_str();
+                            *m.entry(CompactString::from(piece)).or_default() += 1;
+                        }
+                        m
+                    })
+                    .reduce(
+                        || AHashMap::new(),
+                        |mut a, b| {
+                            for (k, v) in b {
+                                *a.entry(k).or_default() += v;
+                            }
+                            a
+                        },
+                    )
+            });
+
+            // Merge local into global (single-threaded)
+            for (k, v) in local {
+                *counts.entry(k).or_default() += v;
+            }
+
+            if exhausted {
+                break;
+            }
+        }
+        log::info!("Processed {} sequences total, {} unique", total_sequences, counts.len());
+
+        // Materialize words & counts
+        let mut words = Vec::with_capacity(counts.len());
+        let mut cvec = Vec::with_capacity(counts.len());
+        for (chunk, c) in counts.into_iter() {
+            words.push(Word::new(chunk.as_bytes().iter().map(|&b| b as u32).collect()));
+            cvec.push(c);
+        }
+
+        self.train_core_incremental(words, cvec,vocab_size);
+        Ok(())
+    }
+
+    // Return the regex pattern
+    pub fn get_pattern(&self) -> String {
+        self.pattern.clone()
+    }
+}
