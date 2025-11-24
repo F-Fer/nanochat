@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap as StdHashMap;
 
 use dary_heap::OctonaryHeap;
+use fancy_regex::Regex;
 use pyo3::prelude::*;
 
 use ahash::{AHashMap, AHashSet};
@@ -63,7 +64,7 @@ impl Word {
 
                 // remove old pairs
                 if let Some (x) = left {
-                    delstas.push(((x, a), -1));
+                    deltas.push(((x, a), -1));
                     deltas.push(((x, new_id), 1));
                 }
                 deltas.push(((a, b), -1));
@@ -73,8 +74,8 @@ impl Word {
                 }
 
                 // write merged token
-                out.push(new_id)
-                i += 1; // skip 'a' and 'b'
+                out.push(new_id);
+                i += 2; // skip 'a' and 'b'
             } else {
                 out.push(self.ids[i]);
                 i += 1;
@@ -85,3 +86,70 @@ impl Word {
         deltas
     }
 }
+
+#[derive(Debug, Eq)]
+struct MergeJob {
+    pair: Pair,
+    count: u64,
+    pos: AHashSet<usize>,
+}
+
+impl PartialEq for MergeJob {
+    fn eq(&self, other: &Self) -> bool {
+        self.count == other.count && self.pair == other.pair
+    }
+}
+
+impl PartialOrd for MergeJob {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MergeJob {
+    fn cmp (&self, other: &Self) -> Ordering {
+        // Max-heap by count; tie-break to ascending pair order (deterministic)
+        if self.count != other.count {
+            self.count.cmp(&other.count)
+        } else {
+            // ascending order on the pair when counts tie
+            other.pair.cmp(&self.pair)
+        }
+    }
+}
+
+#[inline]
+fn count_pairs_parallel(
+    words: &[Word],
+    counts: &[i32],
+) -> (AHashMap<Pair, i32>, AHashMap<Pair, AHashSet<usize>>) {
+    words
+        .par_iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let mut local_pc: AHashMap<Pair, i32> = AHashMap::new();
+            let mut local_wtu: AHashMap<Pair, AHashSet<usize>> = AHashMap::new();
+            if w.ids.len() >= 2 && counts[i] != 0 {
+                for (a, b) in w.pairs() {
+                    *local_pc.entry((a, b)).or_default() += counts[i];
+                    local_wtu.entry((a, b)).or_default().insert(i);
+                }
+            }
+            (local_pc, local_wtu)
+        })
+        .reduce(
+            || (AHashMap::new(), AHashMap::new()),
+            |(mut acc_pc, mut acc_wtu), (pc, wtu)| {
+                for (k, v) in pc {
+                    *acc_pc.entry(k).or_default() += v;
+                }
+                for (k, s) in wtu {
+                    acc_wtu.entry(k).or_default().extend(s);
+                }
+                (acc_pc, acc_wtu)
+            },
+        )
+}
+
+// ----------- end helpers -----------
+
