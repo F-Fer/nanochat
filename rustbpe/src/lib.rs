@@ -412,7 +412,7 @@ impl Tokenizer {
             if token_bytes.len() <= merged_id as usize {
                 token_bytes.resize(merged_id as usize + 1, Vec::new());
             }
-            token_bytes[merged_id as usize] = nerged_bytes.clone();
+            token_bytes[merged_id as usize] = merged_bytes.clone();
 
             mergeable_ranks.push((merged_bytes, merged_id));
         }
@@ -421,4 +421,50 @@ impl Tokenizer {
     }
 
     /// Encode a string into token IDs
+    pub fn encode(&self, text: &str) -> Vec<u32> {
+        let mut all_ids = Vec::new();
+
+        // Split the text using the regex pattern
+        for m in self.compiled_pattern.find_iter(text) {
+            let chunk = m.expect("regex match failed").as_str();
+
+            // Convert chunk to bytes then tu u32 IDs
+            let mut ids: Vec<u32> = chunk.bytes().map(|b| b as u32).collect();
+
+            // Apply merges iteratively
+            while ids.len() >= 2 {
+                // Find the best pair to merge
+                let mut best_pair: Option<(usize, Pair, u32)> = None;
+
+                for i in 0..ids.len() - 1 {
+                    let pair: Pair = (ids[i], ids[i + 1]);
+                    if let Some(&new_id) = self.merges.get(&pair) {
+                        if best_pair.is_none() || new_id < best_pair.unwrap().2 {
+                            best_pair = Some((i, pair, new_id));
+                        }
+                    }
+                }
+
+                // If we found a pair to merge, apply it
+                if let Some((idx, _pair, new_id)) = best_pair {
+                    ids[idx] = new_id;
+                    ids.remove(idx + 1);
+                } else {
+                    // No more merges possible
+                    break;
+                }
+            }
+
+            all_ids.extend(ids);
+        }
+
+        all_ids
+    }
+}
+
+#[pymodule]
+fn rustbpe(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init(); // forwards Rust `log` to Python's `logging`
+    m.add_class::<Tokenizer>()?;
+    Ok(())
 }
