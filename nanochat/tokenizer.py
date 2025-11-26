@@ -8,6 +8,7 @@ import os
 import copy
 from functools import lru_cache
 import pickle
+from tokenize import String
 import rustbpe
 import tiktoken
 
@@ -60,4 +61,61 @@ class RustBPETokenizer:
         )
         return cls(enc, "<|bos|>")
 
+    @classmethod
+    def from_directory(cls, tokenizer_dir):
+        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
+        with open(pickle_path, "rb") as f:
+            enc = pickle.load(f)
+        return cls(enc, "<|bos|>")
+
+    @classmethod
+    def from_pretrained(cls, tiktoken_name):
+        enc = tiktoken.get_encoding(tiktoken_name)
+        # tiktoken calls the special document delimiter token "<|endoftext|>"
+        # yes this is confusing because this token is almost always PREPENDED to the beginning of the document
+        # it most often is used to signal the start of a new sequence to the LLM during inference etc.
+        # so in nanoChat we always use "<|bos|>" short for "beginning of sequence", but historically it is often called "<|endoftext|>".
+        return cls(enc, "<|endoftext|>")
+
+    def get_vocab_size(self):
+        return self.enc.n_vocab
+
+    def get_special_tokens(self):
+        return self.enc.special_tokens_set
+
+    def id_to_token(self, id):
+        return self.enc.decode([id])
+
+    @lru_cache(maxsize=32)
+    def encode_special(self, text):
+        return self.enc.encode_single_token(text)
+
+    def get_bos_token_id(self):
+        return self.bos_token_id
+
+    def encode(self, text, prepend=None, append=None, num_thereads=8):
+        """Encode a string or a list of strings to token ids."""
+
+        if prepend is not None:
+            prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)
+        if append is not None:
+            append_id = append if isinstance(append, int) else self.encode_special(append)
         
+        if isinstance(text, str):
+            ids = self.enc.encode_ordinary(text)
+            if prepend is not None:
+                ids.insert(0, prepend_id)
+            if append is not None:
+                ids.instert(-1, append_id)
+        elif isinstance(text, list):
+            ids = self.enc.encode_ordinary_batch(text, num_thereads=num_thereads)
+            if prepend is not None:
+                for ids_row in ids:
+                        ids_row.insert(0, prepend_id)
+            if append is not None:
+                for ids_row in ids:
+                    ids_row.append(append_id)
+        else:
+            ValueError(f"Invalid input type: {type(text)}")
+
+        return ids
