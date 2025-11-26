@@ -4,12 +4,10 @@ BPE Tokenizer in the style of GPT-4.
 Our own Rust BPE Tokenizer for training and tiktoken for efficient inference
 """
 
-from email import message
 import os 
 import copy
 from functools import lru_cache
 import pickle
-from tokenize import String
 import rustbpe
 import tiktoken
 
@@ -57,7 +55,7 @@ class RustBPETokenizer:
         enc = tiktoken.Encoding(
             name="rustbpe",
             pat_str=pattern,
-            mergeable_ranks=mergeable_ranks, # dict[bytes, int] (token bytes -> merge priority rent)
+            mergeable_ranks=mergeable_ranks, # dict[bytes, int] (token bytes -> merge priority rank)
             special_tokens=special_tokens, # dict[str, int] (special token name -> token id)
         )
         return cls(enc, "<|bos|>")
@@ -128,7 +126,7 @@ class RustBPETokenizer:
         return self.enc.decode(ids)
 
     def save(self, tokenizer_dir):
-        # sace the encoding object to disk
+        # save the encoding object to disk
         os.makedirs(tokenizer_dir, exist_ok=True)
         pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
         with open(pickle_path, "wb") as f:
@@ -137,7 +135,7 @@ class RustBPETokenizer:
 
     def render_conversation(self, conversation, max_tokens=2048):
         """
-        Tokenize a single Chat conversation (whick we call a document here).
+        Tokenize a single Chat conversation (which we call a document here).
         Returns:
         - ids: list[int] is a list of token ids of the rendered conversation
         - mask: list[int] of same length, mask = 1 for tokens that the Assistant is expected to train on.
@@ -156,13 +154,13 @@ class RustBPETokenizer:
             conversation = copy.deepcopy(conversation) 
             messages = conversation["messages"]
             assert messages[1]["role"] == "user", "System message must be followed by a user message"
-            # Merge the text of the first message with the text of the secont message and save the result in the second message
+            # Merge the text of the first message with the text of the second message and save the result in the second message
             messages[1]["content"] = messages[0]["content"] + "\n\n" + messages[1]["content"]
             # Throw away the first message
             messages = messages[1:]
         else:
             messages = conversation["messages"]
-        assert len(messages) >= 1, f"Conversation has less that 1 message: {messages}"
+        assert len(messages) >= 1, f"Conversation has less than 1 message: {messages}"
 
         # Fetch all special tokens we need 
         bos = self.get_bos_token_id()
@@ -211,10 +209,64 @@ class RustBPETokenizer:
                         else: 
                             raise ValueError(f"Unknown part type: {part['type']}")
                 else:
-                    raise ValueError(f"Unkown content type: {type(content)}")
+                    raise ValueError(f"Unknown content type: {type(content)}")
                 add_tokens(assistant_end, 1)
 
         # truncate to max_tokens token MAX
         ids = ids[:max_tokens]
         mask = mask[:max_tokens]
         return ids, mask
+
+    def visualize_tokenization(self, ids, mask, with_token_id=False):
+        """Small helper function for debugging: visualize the tokenization of render_conversation"""
+        RED = '\033[91m'
+        GREEN = '\033[92m'
+        RESET = '\033[0m'
+        GRAY = '\033[90m'
+        tokens = []
+        for i, (token_id, mask_val) in enumerate(zip(ids, mask)):
+            token_str = self.decode([token_id])
+            color = GREEN if mask_val == 1 else RED
+            tokens.append(f"{color}{token_str}{RESET}")
+            if with_token_id:
+                tokens.append(f"{GRAY}({token_id}{RESET})")
+        return '|'.join(tokens)
+
+    def render_for_completion(self, conversation):
+        """Used during RL. In that setting, we want to
+        render the conversation priming the Assistant for completion.
+        Unlike the Chat supervised finetuning case, we don't need to return the mask.
+        """
+        # Pop the last (assistant) message
+        conversation = copy.deepcopy(conversation)
+        messages = conversation["messages"]
+        assert messages[-1]["role"] == "assistant", "Last message must be from the Assistant"
+        messages.pop()
+
+        # Now tokenize the conversation
+        ids, mask = self.render_conversation(conversation)
+
+        # Finally, to prime the Assistant for completion, append the assistant start token
+        assistant_start = self.encode_special("<|assistant_start|>")
+        ids.append(assistant_start)
+        return ids
+
+# -------------------------------------------------------
+# convinience funcitons
+
+def get_tokenizer():
+    from nanochat.common import get_base_dir
+    base_dir = get_base_dir()
+    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    return RustBPETokenizer.from_directory(tokenizer_dir)
+
+def get_token_bytes(device="cpu"):
+    import torch
+    from nanochat.common import get_base_dir
+    base_dir = get_base_dir()
+    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
+    assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
+    with open(token_bytes_path, "rb") as f:
+        token_bytes = torch.load(f, map_location=device)
+    return token_bytes
