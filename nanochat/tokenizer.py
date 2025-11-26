@@ -4,6 +4,7 @@ BPE Tokenizer in the style of GPT-4.
 Our own Rust BPE Tokenizer for training and tiktoken for efficient inference
 """
 
+from email import message
 import os 
 import copy
 from functools import lru_cache
@@ -106,7 +107,7 @@ class RustBPETokenizer:
             if prepend is not None:
                 ids.insert(0, prepend_id)
             if append is not None:
-                ids.instert(-1, append_id)
+                ids.append(append_id)
         elif isinstance(text, list):
             ids = self.enc.encode_ordinary_batch(text, num_thereads=num_thereads)
             if prepend is not None:
@@ -119,3 +120,101 @@ class RustBPETokenizer:
             ValueError(f"Invalid input type: {type(text)}")
 
         return ids
+
+    def __call__(self, *args, **kwargs):
+            return self.encode(*args, **kwargs)
+
+    def decode(self, ids):
+        return self.enc.decode(ids)
+
+    def save(self, tokenizer_dir):
+        # sace the encoding object to disk
+        os.makedirs(tokenizer_dir, exist_ok=True)
+        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
+        with open(pickle_path, "wb") as f:
+            pickle.dump(self.enc, f)
+        print(f"Saved tokenizer encoding to {pickle_path}")
+
+    def render_conversation(self, conversation, max_tokens=2048):
+        """
+        Tokenize a single Chat conversation (whick we call a document here).
+        Returns:
+        - ids: list[int] is a list of token ids of the rendered conversation
+        - mask: list[int] of same length, mask = 1 for tokens that the Assistant is expected to train on.
+        """
+        # ids, masks that we will return and a helper function to help build them.
+        ids, mask = [], []
+        def add_tokens(token_ids, mask_val):
+            if isinstance(token_ids, int):
+                token_ids = [token_ids]
+            ids.extend(token_ids)
+            mask.extend([mask_val] * len(token_ids))
+
+        # Sometimes the first message is a system message
+        # -> just merge it with the second (user) message
+        if conversation["message"][0]["role"] == "system":
+            conversation = copy.deepcopy(conversation) 
+            messages = conversation["messages"]
+            assert messages[1]["role"] == "user", "System message must be followed by a user message"
+            # Merge the text of the first message with the text of the secont message and save the result in the second message
+            messages[1]["content"] = messages[0]["content"] + "\n\n" + messages[1]["content"]
+            # Throw away the first message
+            messages = messages[1:]
+        else:
+            messages = conversation["messages"]
+        assert len(messages) >= 1, f"Conversation has less that 1 message: {messages}"
+
+        # Fetch all special tokens we need 
+        bos = self.get_bos_token_id()
+        user_start, user_end = self.encode_special("<|user_start|>"), self.encode_special("<|user_end|>")
+        assistant_start, assistant_end = self.encode_special("<|assistant_start|>"), self.encode_special("<|assistant_end|>")
+        python_start, python_end = self.encode_special("<|python_start|>"), self.encode_special("<|python_end|>")
+        output_start, output_end = self.encode_special("<|output_start|>"), self.encode_special("<|output_end|>")
+
+        # Now we can tokenize the conversation
+        add_tokens(bos, 0)
+        for i, message in enumerate(messages):
+            # Sanity checks
+            must_be_from = "user" if i % 2 == 0 else "assistant"
+            assert message["role"] == must_be_from, f"Message {i} is from {message['role']} but should be from {must_be_from}"
+
+            content = message["content"]
+
+            if message["role"] == "user":
+                assert isinstance(content, str), "User message are simply expected to be strings"
+                value_ids = self.encode(content)
+                add_tokens(user_start, 0)
+                add_tokens(value_ids, 0)
+                add_tokens(user_end, 0)
+            elif message["role"] == "assistant":
+                add_tokens(assistant_start, 0)
+                if isinstance(content, str):
+                    # Simple string -> add tokens
+                    value_ids = self.encode(content)
+                    add_tokens(value_ids, 1)
+                elif isinstance(content, list):
+                    for part in content:
+                        value_ids = self.encode(part["text"])
+                        if part["type"] == "text":
+                            # String part -> simply add tokens
+                            add_tokens(value_ids, 1)
+                        elif part["type"] == "python":
+                            # Python tool call
+                            add_tokens(python_start, 1)
+                            add_tokens(value_ids, 1)
+                            add_tokens(python_end, 1)
+                        elif part["type"] == "python_output":
+                            # Python output
+                            add_tokens(output_start, 0)
+                            add_tokens(value_ids, 0)
+                            add_tokens(output_end, 0)
+                        else: 
+                            raise ValueError(f"Unknown part type: {part['type']}")
+                else:
+                    raise ValueError(f"Unkown content type: {type(content)}")
+                add_tokens(assistant_end, 1)
+
+        # truncate to max_tokens token MAX
+        ids = ids[:max_tokens]
+        mask = mask[:max_tokens]
+        return ids, mask
