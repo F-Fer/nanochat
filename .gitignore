@@ -1,2 +1,4 @@
 .venv
 rustbpe/target/
+.env
+data/
