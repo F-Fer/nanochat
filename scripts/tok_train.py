@@ -69,7 +69,3 @@ encoded = tokenizer.encode(test_text)
 print(encoded)
 decoded = tokenizer.decode(encoded)
 assert decoded == test_text
-
-# Print the token strings
-token_strings = tokenizer.decode([token_id for token_id in range(tokenizer.get_vocab_size())])
-print(token_strings)

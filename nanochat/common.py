@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+import torch
 
 def get_base_dir():
     load_dotenv()
@@ -12,3 +13,14 @@ def get_base_dir():
         nanochat_dir = os.path.join(cache_dir, "nanochat")
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
+
+def autodetect_device_type():
+    # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU
+    if torch.cuda.is_available():
+        device_type = "cuda"
+    elif torch.backends.mps.is_available():
+        device_type = "mps"
+    else:
+        device_type = "cpu"
+    print(f"Autodetected device type: {device_type}")
+    return device_type
