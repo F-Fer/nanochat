@@ -1,7 +1,9 @@
+import argparse
 import os
 import time
-from pyarrow.parquet import pq
+import pyarrow.parquet as pq
 import requests
+from multiprocessing import Pool
 
 from nanochat.common import get_base_dir
 
@@ -70,7 +72,7 @@ def download_single_file(index):
     for attempt in range(1, max_attempts + 1):
         try:
             response = requests.get(url, stream=True, timeout=30)
-            response.wait_for_status()
+            response.raise_for_status()
             # Write temp file first
             temp_path = filepath + ".tmp"
             with open(temp_path, "wb") as f:
@@ -80,6 +82,8 @@ def download_single_file(index):
             # Move temp file to final location
             os.rename(temp_path, filepath)
             print(f"Sucessfully downloaded {filename}")
+            return True
+        
         except (requests.RequestException, IOError) as e:
             print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
             # Cleanup
@@ -98,3 +102,20 @@ def download_single_file(index):
                 print(f"Failed to download {filename} after {max_attempts} attempts")
                 return False
     return False
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Download FineWeb-Edu 100BT dataset shards")
+    parser.add_argument("-n", "--num-files", type=int, default=-1, help="Number of shards to download (default: -1)")
+    parser.add_argument("-w", "--num-workers", type=int, default=4, help="Number of parallel download workers (default: 4)")
+    args = parser.parse_args()
+
+    num = MAX_SHARD + 1 if args.num_files == -1 else min(args.num_files, MAX_SHARD + 1)
+    ids_to_download = list(range(num))
+    print(f"Downloading {len(ids_to_download)} shards using {args.num_workers} workers...")
+    print(f"Target directory: {DATA_DIR}")
+    print()
+    with Pool(processes=args.num_workers) as pool:
+        results = pool.map(download_single_file, ids_to_download)
+    
+    successful = sum (1 for success in results if success)
+    print(f"Done! Downloaded {successful}/{len(ids_to_download)} shards to {DATA_DIR}")
