@@ -1,5 +1,7 @@
 import os
+import time
 from pyarrow.parquet import pq
+import requests
 
 from nanochat.common import get_base_dir
 
@@ -49,3 +51,50 @@ def parquet_iter_batched(split, start=0, step=1):
             yield texts
 
 # --------------------------------------------
+def download_single_file(index):
+    """Download a single file index, with some backoff"""
+
+    assert index <= MAX_SHARD and index >= 0, f"index must be in range [0,{MAX_SHARD}]"
+    filename = index_to_filename(index)
+    filepath = os.path.join(DATA_DIR, filename)
+    if os.path.exists(filepath):
+        print(f"Skipping {filepath} (already exists)")
+        return True
+
+    # Construct the remote url
+    url = f"{BASE_URL}/{filename}"
+    print(f"Downloading {filename}")
+
+    # Download with retries
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.get(url, stream=True, timeout=30)
+            response.wait_for_status()
+            # Write temp file first
+            temp_path = filepath + ".tmp"
+            with open(temp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024): # 1MB chunks
+                    if chunk:
+                        f.write(chunk)
+            # Move temp file to final location
+            os.rename(temp_path, filepath)
+            print(f"Sucessfully downloaded {filename}")
+        except (requests.RequestException, IOError) as e:
+            print(f"Attempt {attempt}/{max_attempts} failed for {filename}: {e}")
+            # Cleanup
+            for path in [filepath + ".tmp", filepath]:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except e:
+                        pass
+            # Try a few times with exponential backoff: 2^attemps seconds
+            if attempt < max_attempts:
+                wait_time = 2 ** attempt
+                print(f"Waiting {wait_time} seconds before retry...")
+                time.sleep(wait_time)
+            else:
+                print(f"Failed to download {filename} after {max_attempts} attempts")
+                return False
+    return False
