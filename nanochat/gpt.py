@@ -95,6 +95,7 @@ class CausalSelfAttention(nn.Module):
         y = self.c_proj(y)
         return y
 
+
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
@@ -105,4 +106,16 @@ class MLP(nn.Module):
         x = self.c_proj(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
+        return x
+
+
+class block(nn.Module):
+    def __init__(self, config: GPTConfig, layer_idx: int):
+        super().__init__()
+        self.attn = CausalSelfAttention(config, layer_idx)
+        self.mlp = MLP(config)
+
+    def forward(self, x, cos_sin, kv_cache):
+        x = x + self.attn(norm(x), cos_sin, kv_cache)
+        x = x + self.mlp(norm(x))
         return x
