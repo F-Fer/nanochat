@@ -94,3 +94,15 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
         y = self.c_proj(y)
         return y
+
+class MLP(nn.Module):
+    def __init__(self, config: GPTConfig):
+        super().__init__()
+        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd, bias=False)
+
+    def forward(self, x):
+        x = self.c_proj(x)
+        x = F.relu(x).square()
+        x = self.c_proj(x)
+        return x
