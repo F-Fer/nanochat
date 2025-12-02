@@ -1,7 +1,9 @@
 
 from dataclasses import dataclass
 
+from sympy.vector import dyadic
 import torch
+from torch.compiler import config
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -109,7 +111,7 @@ class MLP(nn.Module):
         return x
 
 
-class block(nn.Module):
+class Block(nn.Module):
     def __init__(self, config: GPTConfig, layer_idx: int):
         super().__init__()
         self.attn = CausalSelfAttention(config, layer_idx)
@@ -119,3 +121,40 @@ class block(nn.Module):
         x = x + self.attn(norm(x), cos_sin, kv_cache)
         x = x + self.mlp(norm(x))
         return x
+
+
+class GPT(nn.Module):
+    def __init__(self, congig: GPTConfig) -> None:
+        super().__init__()
+        self.config = config
+        self.transformer = nn.ModuleDict({
+            "wte": nn.Embedding(config.vocab_size, config.n_embd),
+            "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
+        })
+
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.rotary_seq_len = config.seqence_len * 10 # 10x over compute should be enough
+        head_dim = config.n_embd // config.n_head
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.register_buffer("cos", cos, persistent=False) # persistent=False means it is not saved to checkpoint
+        self.register_buffer("sin", sin, persistent=False)
+
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10_000, device=None):
+        """
+        Calculate the rotation values for the rotary embeddings.
+        returns cos, sin
+        cos and sin are both of shape (1, seq_len, 1, head_dim/2)
+        """
+        if device is None:
+            device = self.transformer.wte.weight.device
+        # stride the channels
+        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (base ** (channel_range / head_dim))
+        # stride the time steps
+        t = torch.arange(seq_len, dtype=torch.float32, device=device)
+        # Calculate the rotation frequencies at each (time, channel) pair
+        freqs = torch.outer(t, inv_freq) # outer product, result is shape (seq_len, head_dim/2)
+        cos, sin = freqs.cos(), freqs.sin()
+        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
+        cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
+        return cos, sin
