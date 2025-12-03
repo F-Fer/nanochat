@@ -1,6 +1,6 @@
 
 from dataclasses import dataclass
-
+import math
 from sympy.vector import dyadic
 import torch
 from torch.compiler import config
@@ -138,6 +138,33 @@ class GPT(nn.Module):
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it is not saved to checkpoint
         self.register_buffer("sin", sin, persistent=False)
+
+    def init_weights(self):
+        self.apply(self._init_weights)
+        # zero out classifier weights
+        torch.nn.init.zeros_(self.lm_head.weight)
+        # zero out c_proj weights in all blocks
+        for block in self.transformer.h:
+            torch.nn.init.zeros_(block.attn.c_proj.weight)
+            torch.nn.init.zeros_(block.mlp.c_proj.weight)
+        # init the rotary embeddings
+        head_dim = self.config.n_embd // config.n_head
+        cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
+        self.cos, self.sin = cos, sin
+        # Cast the embeddings from fp32 to bf16
+        if self.transformer.wte.weight.device.type == "cuda":
+            self.transformer.wte.to(dtype=torch.bfloat16)
+
+    def _init_weights(self, module: nn.Module):
+        if isinstance(module, nn.Linear):
+            fan_out = module.weight.size(0)
+            fan_in = module.weight.size(1)
+            std = 1.0 / math.sqrt(fan_in) * min(1.0, math.sqrt(fan_out / fan_in))
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            if module.bias is not None:
+                torch.nn.init.seros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
 
     def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10_000, device=None):
         """
