@@ -1,13 +1,10 @@
 
 from dataclasses import dataclass
 import math
-from sympy.vector import dyadic
 import torch
 from torch.compiler import config
-from torch.distributions.kumaraswamy import _moments
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim.optimizer import Kwargs
 
 from nanochat.muon import Muon
 
