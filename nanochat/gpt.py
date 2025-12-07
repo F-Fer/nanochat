@@ -223,3 +223,34 @@ class GPT(nn.Module):
             for group in opt.param_groups:
                 group["initial_lr"] = group["lr"]
         return optimizers
+
+    @torch.inference_mode()
+    def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
+        """
+        Naive autoreressive streaming inference.
+        To make it super simple , lets assume: 
+        - batch_size = 1
+        - ids and the yielded tokens are simple Python lists and ints
+        """
+        assert isinstance(tokens, list)
+        device = self.get_device()
+        rng = None
+        if temperature > 0:
+            rng = torch.Generator(device=device)
+            rng.manual_seed(seed)
+        ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch device (1, len(tokens))
+        for _ in range(max_tokens):
+            logits = self.forward(ids) # (B, T, vocab_size) T=time_steps
+            logits = logits[:, -1, :] # Take the last token: (B, vocab_size)
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            if temperature > 0:
+                logits = logits / temperature
+                probs = F.softmax(logits, dim=-1)
+                next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
+            else:
+                next_ids = torch.argmax(logits, dim=-1, keepdim=True)
+            ids = torch.cat((ids, next_ids), dim=1)
+            token = next_ids.item()
+            yield token
