@@ -1,3 +1,7 @@
+import wandb
+
+from nanochat.common import autodetect_device_type
+
 # -----------------------------------------------------------------------------
 # User settings
 run = "dummy" # wandb
@@ -34,3 +38,9 @@ model_tag = "" # optionally override the model tag for the output checkpoint dir
 # -----------------------------------------------------------------------------
 
 # NOTE: Currently this is single GPU setup
+
+# Compute init
+device_type = autodetect_device_type() if device_type == "" else device_type
+
+# wandb logging init
+use_dummy_wandb = run == "dummy" 
