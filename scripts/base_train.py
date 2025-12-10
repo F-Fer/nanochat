@@ -5,7 +5,8 @@ import wandb
 
 import torch
 
-from nanochat.common import autodetect_device_type, DummyWandb
+from nanochat.tokenizer import get_tokenizer
+from nanochat.common import autodetect_device_type, DummyWandb, compute_init
 
 # -----------------------------------------------------------------------------
 # User settings
@@ -49,8 +50,15 @@ for k,v in globals().items():
 
 # Compute init
 device_type = autodetect_device_type() if device_type == "" else device_type
+device = compute_init()
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" 
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
+
+# Tokenizer
+tokenizer = get_tokenizer()
+# token_bytes = get_token_bytes(device=device)
+vocab_size = tokenizer.get_vocab_size()
+print(f"Vocab size: {vocab_size:,}")

@@ -25,6 +25,28 @@ def autodetect_device_type():
     print(f"Autodetected device type: {device_type}")
     return device_type
 
+def compute_init(device_type="cuda"):
+    """
+    Basic initialization
+    Args:
+        device_type = 'cuda' | 'cpu' | 'mps'
+    Returns:
+        device
+    """
+    assert device_type in ["cuda", "mps", "cpu"]
+    if device_type == "cuda":
+        assert torch.cuda.is_available(), "Your PyTorch installation is not configured for CUDA but device_type is 'cuda'"
+    if device_type == "mps":
+        assert torch.backends.mps.is_available(), "Your PyTorch installation is not configured for MPS but device_type is 'mps'"
+    
+    # Reproducability
+    torch.manual_seed(42)
+
+    # Precision
+    if device_type == "cuda":
+        torch.set_float32_matmul_precision("high")
+    
+
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""
     def __init__(self):
