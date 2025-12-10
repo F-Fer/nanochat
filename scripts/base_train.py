@@ -1,6 +1,11 @@
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import wandb
 
-from nanochat.common import autodetect_device_type
+import torch
+
+from nanochat.common import autodetect_device_type, DummyWandb
 
 # -----------------------------------------------------------------------------
 # User settings
@@ -33,14 +38,19 @@ core_metric_per_task = 500 # Examples per task in estimating the core metric
 sample_every = 2_000
 save_every = -1 # every how many steps to save the model checkpoint (-1 = disable, save only at the end)
 model_tag = "" # optionally override the model tag for the output checkpoint dir name
-# TODO: allow CLI to override the configs
-# TODO: allow override from config file
+# TODO: allow CLI to override the configs or config from config file
+user_config = dict()
+for k,v in globals().items():
+    if k.startswith("_") and isinstance(k, (int, float, bool, str)):
+        user_config[k] = v 
 # -----------------------------------------------------------------------------
 
 # NOTE: Currently this is single GPU setup
 
 # Compute init
 device_type = autodetect_device_type() if device_type == "" else device_type
+get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" 
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=run, config=user_config)
