@@ -261,6 +261,9 @@ def get_tokenizer():
     return RustBPETokenizer.from_directory(tokenizer_dir)
 
 def get_token_bytes(device="cpu"):
+    """
+    Returns the number of bytes per token. (torch.Tensor of shape (vocab_size,))
+    """
     import torch
     from nanochat.common import get_base_dir
     base_dir = get_base_dir()
