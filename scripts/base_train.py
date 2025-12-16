@@ -5,7 +5,7 @@ import wandb
 
 import torch
 
-from nanochat.tokenizer import get_tokenizer
+from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.common import autodetect_device_type, DummyWandb, compute_init
 
 # -----------------------------------------------------------------------------
@@ -59,6 +59,16 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", 
 
 # Tokenizer
 tokenizer = get_tokenizer()
-# token_bytes = get_token_bytes(device=device)
+token_bytes = get_token_bytes(device=device)
 vocab_size = tokenizer.get_vocab_size()
 print(f"Vocab size: {vocab_size:,}")
+
+# Model kwargs are 
+num_layers = depth
+model_dim = depth * 64 # aspect ratio of 64
+num_heads = max(1, (model_dim + 127) // 128) # head dim 128
+num_kv_heads = num_heads # 1:1 -> GQA disabled
+print(f"num_layers: {num_layers}")
+print(f"model_dim: {model_dim}")
+print(f"num_heads: {num_heads}")
+print(f"num_kv_heads: {num_kv_heads}")
