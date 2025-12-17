@@ -72,3 +72,11 @@ print(f"num_layers: {num_layers}")
 print(f"model_dim: {model_dim}")
 print(f"num_heads: {num_heads}")
 print(f"num_kv_heads: {num_kv_heads}")
+
+# figure out if we need gradient accumulation to reach the desired total batch size
+tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration
+assert total_batch_size % tokens_per_fwdbwd == 0
+grad_accum_steps = total_batch_size // tokens_per_fwdbwd
+print(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
+print(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+
