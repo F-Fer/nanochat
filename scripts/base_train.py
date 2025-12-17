@@ -2,11 +2,12 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import wandb
-
 import torch
 
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
-from nanochat.common import autodetect_device_type, DummyWandb, compute_init
+from nanochat.checkpoint_manager import load_checkpoint, save_checkpoint
+from nanochat.common import autodetect_device_type, DummyWandb, compute_init, get_base_dir
+from nanochat.gpt import GPT, GPTConfig
 
 # -----------------------------------------------------------------------------
 # User settings
@@ -80,3 +81,30 @@ grad_accum_steps = total_batch_size // tokens_per_fwdbwd
 print(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
+# -----------------------------------------------------------------------------
+# Initialize the Model
+
+# Create a new model with random weights
+model_config_kwargs = dict(
+    sequence_len=max_seq_len, 
+    vocab_size=vocab_size, 
+    n_layer=num_layers, 
+    n_head=num_heads, 
+    n_kv_head=num_kv_heads, 
+    n_embd=model_dim)
+with torch.device("meta"):
+    model_config = GPTConfig(**model_config_kwargs)
+    model = GPT(model_config)
+model.to_empty(device=device)
+model.init_weights()
+
+# If we are resuming overwrite the models parameters with the ones from the checkpoint
+base_dir = get_base_dir()
+output_dirname = model_tag if model_tag else f"d{depth}"
+checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
+resuming = resume_from_step != -1
+if resuming:
+    print(f"Resuming optimization from step {resume_from_step}")
+    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, resume_from_step, device, load_optimizer=True)
+    model.load_state_dict(model_data, strict=True, assign=True)
+    del model_data # free up this memory after copy
