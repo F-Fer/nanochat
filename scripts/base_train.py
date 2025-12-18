@@ -116,3 +116,21 @@ print(f"Number of parameters: {num_params:,}")
 num_flops_per_token = model.estimate_flops()
 print(f"Estimated FLOPs per token: {num_flops_per_token}")
 
+# Calculate the number of iterations
+assert num_iterations > 0 or target_flops > 0 or target_param_data_ratio > 0
+if num_iterations > 0:
+    print(f"Using user-provided number of iterations: {num_iterations}")
+elif target_flops > 0:
+    # calculate the number of iterations from the target flops
+    num_iterations = round(target_flops / (num_flops_per_token * total_batch_size))
+    print(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
+elif target_param_data_ratio > 0:
+    target_tokens = num_params * target_param_data_ratio
+    num_iterations = target_tokens // total_batch_size
+    print(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
+else:
+    raise ValueError("No target horizon specified")
+total_tokens = total_batch_size * num_iterations
+print(f"Total number of training tokens: {total_tokens:,}")
+print(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
+print(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
