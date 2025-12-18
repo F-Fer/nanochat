@@ -6,6 +6,7 @@ import torch
 
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import load_checkpoint, save_checkpoint
+from nanochat.dataloader import tokenizing_data_loader_with_state
 from nanochat.common import autodetect_device_type, DummyWandb, compute_init, get_base_dir
 from nanochat.gpt import GPT, GPTConfig
 
@@ -144,5 +145,13 @@ if resuming:
     for opt, dat in zip(optimizers, optimizer_data):
         opt.load_state_dict(dat)
     del optimizer_data # free memory
+
+# -----------------------------------------------------------------------------
+# Initialize the DataLoader
+tokens_dir = os.path.join(base_dir, "tokenized_data")
+dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
+train_loader = tokenizing_data_loader_with_state(B=device_batch_size, T=max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+build_val_loader = lambda: tokenizing_data_loader_with_state(device_batch_size, max_seq_len, split="val", device=device)
+x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------

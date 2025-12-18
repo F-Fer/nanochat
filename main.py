@@ -1,6 +1,12 @@
-from nanochat.tokenizer import get_tokenizer
+from nanochat.dataloader import tokenizing_distributed_data_loader_with_state
 
 if __name__ == "__main__":
-    tokenizer = get_tokenizer()
-    token_strings = [tokenizer.decode(token_idx) for token_idx in [range(tokenizer.get_vocab_size() - 1, 0, -1)]]
-    print(" ".join(token_strings))
+    print("Starting dataloader")
+    batches = tokenizing_distributed_data_loader_with_state(B=1, T=1, split="train", device="cpu")
+    print("Dataloader started")
+    for inputs, targets, state_dict in batches:
+        print(inputs)
+        print(targets.shape)
+        print(state_dict)
+        break
+    print("Dataloader finished")

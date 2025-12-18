@@ -92,7 +92,7 @@ class RustBPETokenizer:
     def get_bos_token_id(self):
         return self.bos_token_id
 
-    def encode(self, text, prepend=None, append=None, num_thereads=8):
+    def encode(self, text, prepend=None, append=None, num_threads=8):
         """Encode a string or a list of strings to token ids."""
 
         if prepend is not None:
@@ -107,7 +107,7 @@ class RustBPETokenizer:
             if append is not None:
                 ids.append(append_id)
         elif isinstance(text, list):
-            ids = self.enc.encode_ordinary_batch(text, num_thereads=num_thereads)
+            ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
             if prepend is not None:
                 for ids_row in ids:
                         ids_row.insert(0, prepend_id)
