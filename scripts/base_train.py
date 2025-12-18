@@ -24,7 +24,7 @@ target_param_data_ratio = 20
 device_batch_size = 1
 total_batch_size = 524_288 # Total desired batch size (in tokens)
 embedding_lr = 0.2 # Learning rate for the embedding parameters (Adam)
-enembedding_lr = 0.004 # Learning rate for the unembedding parameters (Adam)
+unembedding_lr = 0.004 # Learning rate for the unembedding parameters (Adam)
 weight_decay = 0.0 # Weight decay for the embedding/unembedding parameters (Adam)
 matrix_lr = 0.02 # lr for the matrix parameters (Muon)
 grad_clip = 1.0 
@@ -94,7 +94,7 @@ model_config_kwargs = dict(
     n_embd=model_dim)
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
-    model = GPT(model_config)
+    model : GPT = GPT(model_config)
 model.to_empty(device=device)
 model.init_weights()
 
@@ -134,3 +134,15 @@ total_tokens = total_batch_size * num_iterations
 print(f"Total number of training tokens: {total_tokens:,}")
 print(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
 print(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
+
+# -----------------------------------------------------------------------------
+# Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
+optimizers = model.setup_optimizers(unembedding_lr=unembedding_lr, embedding_lr=embedding_lr, matrix_lr=matrix_lr, weight_decay=weight_decay)
+adamw_optimizer, muon_optimizer = optimizers
+
+if resuming:
+    for opt, dat in zip(optimizers, optimizer_data):
+        opt.load_state_dict(dat)
+    del optimizer_data # free memory
+
+# -----------------------------------------------------------------------------

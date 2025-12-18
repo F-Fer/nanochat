@@ -198,7 +198,7 @@ class GPT(nn.Module):
         num_flops_per_token = 6 * (nparams - nparams_embeddings) + 12 * l * h * q * t
         return num_flops_per_token
 
-    def setup_optimizers(self, unembedding_lr=0.004, embeding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
+    def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
         model_dim = self.config.n_embd
         # Separate out all parameters into 3 groups (matrix, embedding, lm_head)
         matrix_params = list(self.transformer.h.parameters())
@@ -210,7 +210,7 @@ class GPT(nn.Module):
         dmodel_lr_scale = (model_dim / 768) **-0.5
         adam_groups = [
             dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
-            dict(params=embedding_params, lr=embeding_lr * dmodel_lr_scale),
+            dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
         ]
         adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
         adamw_optimizer = torch.optim.AdamW(adam_groups, fused=True, **adamw_kwargs)
