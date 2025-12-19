@@ -4,7 +4,6 @@ Muon optomizer from Keller et al.
 import torch
 from torch import Tensor
 
-@torch.compile
 def zeropower_via_newtonschulz5(G: Tensor, steps: int):
     assert G.ndim >= 2 # batched Muon
     a, b, c = (3.4445, -4.7750,  2.0315)

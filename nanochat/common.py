@@ -112,6 +112,7 @@ def compute_init(device_type="cuda"):
     if device_type == "cuda":
         torch.set_float32_matmul_precision("high")
     
+    return torch.device(device_type)
 
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""

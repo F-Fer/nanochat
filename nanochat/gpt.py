@@ -106,7 +106,7 @@ class MLP(nn.Module):
         self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd, bias=False)
 
     def forward(self, x):
-        x = self.c_proj(x)
+        x = self.c_fc(x)
         x = F.relu(x).square()
         x = self.c_proj(x)
         return x
@@ -149,7 +149,7 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.attn.c_proj.weight)
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
         # init the rotary embeddings
-        head_dim = self.config.n_embd // config.n_head
+        head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
         # Cast the embeddings from fp32 to bf16
