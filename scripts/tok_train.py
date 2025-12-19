@@ -2,9 +2,12 @@ import os
 import argparse
 import time
 
+import torch
+
 from nanochat.dataset import parquet_iter_batched
 from nanochat.common import get_base_dir
 from nanochat.tokenizer import RustBPETokenizer
+from nanochat.report import get_report
 
 # Parse command line args
 # -----------------------------------------------------------------------------
@@ -48,7 +51,8 @@ text_iter = text_iterator()
 t0 = time.time()
 tokenizer = RustBPETokenizer.train_from_iterator(text_iter, args.vocab_size)
 t1 = time.time()
-print(f"Training time: {(t1 - t0):.2f}s")
+train_time = (t1 - t0)
+print(f"Training time: {train_time:.2f}s")
 
 # -----------------------------------------------------------------------------
 # Save tokenizer to disk
@@ -66,6 +70,39 @@ Contractions: I'm, you're, it's
 Special chars: @#$%^&*()
 Unicode: 你好世界 🌍"""
 encoded = tokenizer.encode(test_text)
-print(encoded)
 decoded = tokenizer.decode(encoded)
 assert decoded == test_text
+
+# -----------------------------------------------------------------------------
+# Create cache mapping from token id to number of bytes of that token for efficient 
+# evaluation of bits per byte.
+vocab_size = tokenizer.get_vocab_size()
+special_set = set(tokenizer.get_special_tokens())
+token_strings = [tokenizer.decode([token_id]) for token_id in range(vocab_size)]
+token_bytes = []
+for token_id in range(vocab_size):
+    token_str = token_strings[token_id]
+    if token_str in special_set:
+        token_bytes.append(0) # we dont include special tokens
+    else:
+        id_bytes = len(token_str.encode("utf-8")) # number of bytes taht make up this token
+        token_bytes.append(id_bytes)
+token_bytes = torch.tensor(token_bytes, dtype=torch.int32)
+token_bytes_path = os.path.join(save_dir, "token_bytes.pt")
+with open(token_bytes_path, "wb") as f:
+    torch.save(token_bytes, f)
+print(f"Saved token bytes to {token_bytes_path}")
+
+# Log to report
+token_bytes_nonzero = (token_bytes[token_bytes > 0]).to(dtype=torch.float32)
+get_report().log(section="Tokenizer training", data=[
+    vars(args), # argparse command line arguments
+    {"train_time": train_time},
+    {"num_special_tokens": len(special_set)},
+    {
+        "token_bytes_min": int(token_bytes_nonzero.min().item()),
+        "token_bytes_max": int(token_bytes_nonzero.max().item()),
+        "token_bytes_mean": token_bytes_nonzero.mean().item(),
+        "token_bytes_std": token_bytes_nonzero.std().item(),
+    }
+])
