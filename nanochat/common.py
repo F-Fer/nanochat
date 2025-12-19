@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import urllib.request
 from dotenv import load_dotenv
 import torch
 
@@ -52,6 +53,32 @@ def get_base_dir():
         nanochat_dir = os.path.join(cache_dir, "nanochat")
     os.makedirs(nanochat_dir, exist_ok=True)
     return nanochat_dir
+
+def download_file(url, filename, postprocess_fn=None):
+    """
+    Downloads a file from a URL to a local path in the base directory.
+    """
+    base_dir = get_base_dir()
+    file_path = os.path.join(base_dir, filename)
+
+    if os.path.exists(file_path):
+        return file_path
+    
+    # Download the content as bytes
+    print(f"Downloading {url}...")
+    with urllib.request.urlopen(url) as response:
+        content = response.read() # bytes
+
+    # Write to local file
+    with open(file_path, 'wb') as f:
+        f.write(content)
+    print(f"Downloaded to {file_path}")
+
+    # Run the postprocess function if provided
+    if postprocess_fn is not None:
+        postprocess_fn(file_path)
+
+    return file_path
 
 def autodetect_device_type():
     # prefer to use CUDA if available, otherwise use MPS, otherwise fallback on CPU

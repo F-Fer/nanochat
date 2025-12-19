@@ -22,7 +22,7 @@ from contextlib import nullcontext
 
 import torch
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, autodetect_device_type, download_file_with_lock
+from nanochat.common import compute_init, get_base_dir, autodetect_device_type, download_file
 from nanochat.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
@@ -43,7 +43,7 @@ def place_eval_bundle(file_path):
             zip_ref.extractall(tmpdir)
         extracted_bundle_dir = os.path.join(tmpdir, "eval_bundle")
         shutil.move(extracted_bundle_dir, eval_bundle_dir)
-    print0(f"Placed eval_bundle directory at {eval_bundle_dir}")
+    print(f"Placed eval_bundle directory at {eval_bundle_dir}")
 
 def evaluate_model(model, tokenizer, device, max_per_task=-1):
     """
@@ -55,7 +55,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
     eval_bundle_dir = os.path.join(base_dir, "eval_bundle")
     # Download the eval bundle to disk (and unzip if needed)
     if not os.path.exists(eval_bundle_dir):
-        download_file_with_lock(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
+        download_file(EVAL_BUNDLE_URL, "eval_bundle.zip", postprocess_fn=place_eval_bundle)
     config_path = os.path.join(eval_bundle_dir, "core.yaml")
     data_base_path = os.path.join(eval_bundle_dir, "eval_data")
     eval_meta_data = os.path.join(eval_bundle_dir, "eval_meta_data.csv")
@@ -84,7 +84,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
             'num_fewshot': task['num_fewshot'][0],
             'continuation_delimiter': task.get('continuation_delimiter', ' ')
         }
-        print0(f"Evaluating: {label} ({task_meta['num_fewshot']}-shot, type: {task_meta['task_type']})... ", end='')
+        print(f"Evaluating: {label} ({task_meta['num_fewshot']}-shot, type: {task_meta['task_type']})... ", end='')
 
         # Load data for this task
         data_path = os.path.join(data_base_path, task_meta['dataset_uri'])
@@ -106,7 +106,7 @@ def evaluate_model(model, tokenizer, device, max_per_task=-1):
         centered_result = (accuracy - 0.01 * random_baseline) / (1.0 - 0.01 * random_baseline)
         centered_results[label] = centered_result
         end_time = time.time()
-        print0(f"accuracy: {accuracy:.4f} | centered: {centered_result:.4f} | time: {end_time - start_time:.2f}s")
+        print(f"accuracy: {accuracy:.4f} | centered: {centered_result:.4f} | time: {end_time - start_time:.2f}s")
 
     core_metric = sum(centered_results.values()) / len(centered_results)
     out = {
@@ -131,7 +131,7 @@ class ModelWrapper:
         return logits
 
 def load_hf_model(hf_path: str, device):
-    print0(f"Loading model from: {hf_path}")
+    print(f"Loading model from: {hf_path}")
     # Load the model
     from transformers import AutoModelForCausalLM
     model = AutoModelForCausalLM.from_pretrained(hf_path)
@@ -160,7 +160,7 @@ def main():
     if args.hf_path is not None:
         # atm assume that if a path is given, it's a huggingface model path
         hf_path = args.hf_path
-        print0(f"Loading huggingface model from: {hf_path}")
+        print(f"Loading huggingface model from: {hf_path}")
         model, tokenizer = load_hf_model(hf_path, device)
         model_name = hf_path # just for logging
         model_slug = hf_path.replace("/", "-") # for the output csv file
@@ -190,11 +190,11 @@ def main():
                 f.write(f"{label:<35}, {results[label]:<10.6f}, {centered_results[label]:<10.6f}\n")
             f.write(f"{'CORE':<35}, {'':<10}, {core_metric:<10.6f}\n")
         # Print the content of the csv file to console too
-        print0("="*80)
-        print0(f"Model: {model_name}")
-        print0("="*80)
+        print("="*80)
+        print(f"Model: {model_name}")
+        print("="*80)
         with open(output_csv_path, 'r', encoding='utf-8') as f:
-            print0(f.read())
+            print(f.read())
 
     # Log to report
     from nanochat.report import get_report
@@ -205,8 +205,6 @@ def main():
         },
         centered_results, # the full table
     ])
-
-    compute_cleanup()
 
 if __name__ == "__main__":
     main()
