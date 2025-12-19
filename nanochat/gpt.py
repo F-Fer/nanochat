@@ -125,7 +125,7 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, congig: GPTConfig) -> None:
+    def __init__(self, config: GPTConfig) -> None:
         super().__init__()
         self.config = config
         self.transformer = nn.ModuleDict({
@@ -134,7 +134,7 @@ class GPT(nn.Module):
         })
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.rotary_seq_len = config.seqence_len * 10 # 10x over compute should be enough
+        self.rotary_seq_len = config.sequence_len * 10 # 10x over compute should be enough
         head_dim = config.n_embd // config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.register_buffer("cos", cos, persistent=False) # persistent=False means it is not saved to checkpoint
@@ -163,7 +163,7 @@ class GPT(nn.Module):
             std = 1.0 / math.sqrt(fan_in) * min(1.0, math.sqrt(fan_out / fan_in))
             torch.nn.init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
-                torch.nn.init.seros_(module.bias)
+                torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
 
@@ -192,10 +192,10 @@ class GPT(nn.Module):
 
     def estimate_flops(self):
         """Return the estimated FLOPs per token for the model."""
-        nparams = sum(p.numel() for p in self.parameters)
+        nparams = sum(p.numel() for p in self.parameters())
         nparams_embeddings = self.transformer.wte.weight.numel()
-        l, h, q, t = self.config.n_layer, self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
-        num_flops_per_token = 6 * (nparams - nparams_embeddings) + 12 * l * h * q * t
+        n_layer, n_head, head_dim, seq_len = self.config.n_layer, self.config.n_head, self.config.n_embd // self.config.n_head, self.config.sequence_len
+        num_flops_per_token = 6 * (nparams - nparams_embeddings) + 12 * n_layer * n_head * head_dim * seq_len
         return num_flops_per_token
 
     def setup_optimizers(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0):
@@ -223,6 +223,38 @@ class GPT(nn.Module):
             for group in opt.param_groups:
                 group["initial_lr"] = group["lr"]
         return optimizers
+
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+        B, T = idx.size()
+
+        # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
+        assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
+        assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
+        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+        # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
+        T0 = 0 if kv_cache is None else kv_cache.get_pos()
+        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+
+        # Forward the trunk of the Transformer
+        x = self.transformer.wte(idx)
+        x = norm(x)
+        for block in self.transformer.h:
+            x = block(x, cos_sin, kv_cache)
+        x = norm(x)
+
+        # Forward the lm_head (compute logits)
+        softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
+        logits = self.lm_head(x) # (B, T, vocab_size) <- very big tensor, large amount of memory
+        logits = logits.float() # switch to fp32 for logit softcap and loss computation
+        logits = softcap * torch.tanh(logits / softcap) # squash the logits
+
+        if targets is not None:
+            # training: given the targets, compute and return the loss
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            return loss
+        else:
+            # inference: just return the logits directly
+            return logits
 
     @torch.inference_mode()
     def generate(self, tokens, max_tokens, temperature=1.0, top_k=None, seed=42):
