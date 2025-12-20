@@ -24,12 +24,12 @@ device_type = "" # cuda|mps|cpu, autodetect by default
 depth = 4
 max_seq_len = 512
 # Training horizon. Only one of the 3 will be used, on this order of precendence
-num_iterations = 20 # -1
+num_iterations = -1
 target_flops = -1
 target_param_data_ratio = 20
 # Optimization
-device_batch_size = 1
-total_batch_size = 512 # 524_288 # Total desired batch size (in tokens)
+device_batch_size = 12
+total_batch_size = 524_288 # Total desired batch size (in tokens)
 embedding_lr = 0.2 # Learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.004 # Learning rate for the unembedding parameters (Adam)
 weight_decay = 0.0 # Weight decay for the embedding/unembedding parameters (Adam)
@@ -84,7 +84,6 @@ print(f"num_kv_heads: {num_kv_heads}")
 
 # figure out if we need gradient accumulation to reach the desired total batch size
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration
-assert total_batch_size % tokens_per_fwdbwd == 0
 grad_accum_steps = total_batch_size // tokens_per_fwdbwd
 print(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
 print(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")

@@ -28,7 +28,7 @@ def save_checkpoint(checkpoint_dir, step, model_data, optimizer_data, meta_data)
         json.dump(meta_data, f, indent=2)
     logger.info(f"Saved model metadata to {meta_path}")
     if optimizer_data is not None:
-        os.makedirs(checkpoint_dir, exists_ok=True)
+        os.makedirs(checkpoint_dir, exist_ok=True)
         optimizer_path = os.path.join(checkpoint_dir, f"optim_{step:06d}.pt")
         torch.save(optimizer_data, optimizer_path)
         logger.info(f"Saved optimizer state to {optimizer_path}")

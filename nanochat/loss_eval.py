@@ -27,7 +27,7 @@ def evaluate_bpb(model: GPT, batches, steps, token_bytes):
     total_bytes = torch.tensor(0, dtype=torch.int64, device=model.get_device())
     batch_iter = iter(batches)
     for _ in range(steps):
-        x, y = next(batch_iter)
+        x, y, _ = next(batch_iter)
         loss2d = model(x, y, loss_reduction='none') # (B, T)
         loss2d = loss2d.view(-1) # flatten to (B * T,)
         y = y.view(-1)
