@@ -4,6 +4,7 @@ import logging
 import urllib.request
 from dotenv import load_dotenv
 import torch
+import torch.distributed as dist
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
@@ -91,13 +92,38 @@ def autodetect_device_type():
     print(f"Autodetected device type: {device_type}")
     return device_type
 
+def is_ddp():
+    return int(os.environ.get('RANK', -1)) != -1
+
+def get_dist_info():
+    """
+    Returns:
+        ddp: bool
+        ddp_rank: int
+        ddp_local_rank: int
+        ddp_world_size: int
+    """
+    if is_ddp():
+        assert all(var in os.environ for var in ['RANK', 'LOCAL_RANK', 'WORLD_SIZE']) # Must be set by torchrun
+        ddp_rank = int(os.environ['RANK'])
+        ddp_local_rank = int(os.environ['LOCAL_RANK'])
+        ddp_world_size = int(os.environ['WORLD_SIZE'])
+        return True, ddp_rank, ddp_local_rank, ddp_world_size
+    else:
+        return False, 0, 0, 1 # single GPU
+
+
 def compute_init(device_type="cuda"):
     """
     Basic initialization
     Args:
         device_type = 'cuda' | 'cpu' | 'mps'
     Returns:
-        device
+        ddp: bool
+        ddp_rank: int
+        ddp_local_rank: int
+        ddp_world_size: int
+        device: torch.device
     """
     assert device_type in ["cuda", "mps", "cpu"]
     if device_type == "cuda":
@@ -111,8 +137,18 @@ def compute_init(device_type="cuda"):
     # Precision
     if device_type == "cuda":
         torch.set_float32_matmul_precision("high")
+
+    # Distributed setup: Distributed Data Parallel (DDP), optional, and requires CUDA
+    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    if ddp and device_type == "cuda":
+        device = torch.device("cuda", ddp_local_rank)
+        torch.cuda.set_device(device)  # make "cuda" default to this device
+        dist.init_process_group(backend="nccl", device_id=device)
+        dist.barrier()
+    else:
+        device = torch.device(device_type) # mps/cpu
     
-    return torch.device(device_type)
+    return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
 
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""
