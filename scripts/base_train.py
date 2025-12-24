@@ -9,7 +9,7 @@ import torch
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import load_checkpoint, save_checkpoint
 from nanochat.dataloader import tokenizing_data_loader_with_state
-from nanochat.common import autodetect_device_type, DummyWandb, compute_init, get_base_dir
+from nanochat.common import autodetect_device_type, DummyWandb, compute_init, get_base_dir, print0
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.report import get_report
@@ -58,7 +58,7 @@ for k,v in list(globals().items()):
 
 # Compute init
 device_type = autodetect_device_type() if device_type == "" else device_type
-device = compute_init(device_type=device_type)
+device, ddp_rank, ddp_local_rank, ddp_world_size = compute_init(device_type=device_type)
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 

@@ -150,6 +150,11 @@ def compute_init(device_type="cuda"):
     
     return ddp, ddp_rank, ddp_local_rank, ddp_world_size, device
 
+def print0(s="",**kwargs):
+    ddp_rank = int(os.environ.get('RANK', 0))
+    if ddp_rank == 0:
+        print(s, **kwargs)
+
 class DummyWandb:
     """Useful if we wish to not use wandb but have all the same signatures"""
     def __init__(self):
@@ -158,3 +163,8 @@ class DummyWandb:
         pass
     def finish(self):
         pass
+
+def compute_cleanup():
+    """Companion function to compute_init, to clean things up before script exit"""
+    if is_ddp():
+        dist.destroy_process_group()
