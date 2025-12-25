@@ -3,7 +3,9 @@ Muon optomizer from Keller et al.
 """
 import torch
 from torch import Tensor
+from torch.distributed import dist
 
+@torch.compile
 def zeropower_via_newtonschulz5(G: Tensor, steps: int):
     assert G.ndim >= 2 # batched Muon
     a, b, c = (3.4445, -4.7750,  2.0315)
@@ -68,3 +70,107 @@ class Muon(torch.optim.Optimizer):
                 g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
                 g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
                 p.add_(g, alpha=-group["lr"] * max(1, p.size(-2) / p.size(-1))**0.5)
+
+
+class DistMuon(torch.optim.Optimizer):
+    """
+    Muon: SGD-momentum + (optional) Nesterov, then orthogonalize the 2D update via Newton-Schulz,
+    finally apply aspect-ratio scaled step. Performs its own distributed synchronization:
+      - reduce_scatter(AVG) for gradient averaging
+      - all_gather to replicate updated weights
+
+    Notes:
+      * Designed for 2D parameters (e.g., linear/conv kernels reshaped to 2D). Do not use for 0D/1D
+        params like embeddings or scalars.
+      * Momentum buffers are maintained only on the 'owner' rank for each parameter (rank chosen
+        by block-cyclic assignment below). If you checkpoint optimizer state on a single rank,
+        consolidate states beforehand.
+
+    Args:
+        params: iterable of Tensors
+        lr: learning rate
+        momentum: momentum coefficient in [0,1)
+        nesterov: if True, Nesterov-style update (g <- lerp(g, buf, momentum)); else use buf
+        ns_steps: number of Newton-Schulz iterations for the orthogonalization
+    """
+    def __init__(self, params, lr: float = 0.02, momentum: float = 0.95,
+                 nesterov: bool = True, ns_steps: int = 5):
+        defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+        params = list(params)
+        assert all(p.ndim == 2 for p in params), "Muon expects 2D parameters only"
+        rank = dist.get_rank()
+        # Group all parameters by their shape
+        shapes = sorted({p.shape for p in params}) # sort to ensure consistent / deterministic ordering
+        param_groups = []
+        for shape in shapes:
+            group_params = [p for p in params if p.shape == shape]
+            device, dtype = group_params[0].device, group_params[0].dtype
+            assert all(p.device == device for p in group_params)
+            assert all(p.dtype == dtype for p in group_params)
+            if rank == 0:
+                print(f"Muon: Grouping {len(group_params)} params of shape {shape}, device {device}, dtype {dtype}")
+            param_groups.append(dict(params=group_params, zero_buffer=torch.zeros_like(group_params[0])))
+        super().__init__(param_groups, defaults)
+
+    @torch.no_grad()
+    def step(self):
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+
+        # Ensure all grads exist
+        assert all(p.grad is not None for group in self.param_groups for p in group["params"]), "All params must have grads"
+
+        # Kick off all the reduce scatter operations to average up the gradients across all ranks
+        all_reduce_futures = []
+        for group in self.param_groups:
+            params = group["params"]
+            zero_buffer = group["zero_buffer"]
+            # Go through params in groups of world_size.
+            for base_i in range(0, len(params), world_size):
+                # The compute owner of each param is rank i % world_size
+                owner_idx = base_i + rank
+                # each rank stacks up its chunk of world_size params into a list
+                rs_input = [p.grad for p in params[base_i:base_i + world_size]]
+                # pad rs_input with the zero buffer to complete the group
+                rs_input.extend([zero_buffer] * (world_size - len(rs_input)))
+                # the output buffer gets strided across the group based on the rank
+                rs_output = params[owner_idx].grad if owner_idx < len(params) else torch.empty_like(zero_buffer)
+                # reduce scatter the gradients within this group of world_size params
+                work = dist.reduce_scatter(rs_output, rs_input, op=dist.ReduceOp.AVG, async_op=True).get_future()
+                all_reduce_futures.append(work)
+
+        # Now each rank computes the update and gathers
+        future_idx = 0
+        all_gather_futures = []
+        for group in self.param_groups:
+            params = group["params"]
+            zero_buffer = group["zero_buffer"]
+            # Go through params in groups of world_size.
+            for base_i in range(0, len(params), world_size):
+                # The compute owner of each param is rank i % world_size
+                owner_idx = base_i + rank # calculate the index of the param that this rank owns
+                # Wait for the reduce scatter to complete
+                all_reduce_futures[future_idx].wait() # possibly later we could use wait_any polling instead
+                future_idx += 1
+                # Owner computes the Muon update, result is in its param
+                if owner_idx < len(params):
+                    p = params[owner_idx]
+                    g = p.grad  # now averaged across ranks
+                    state = self.state[p]
+                    if "momentum_buffer" not in state:
+                        state["momentum_buffer"] = torch.zeros_like(g)
+                    buf: Tensor = state["momentum_buffer"]
+                    buf.lerp_(g, 1.0 - group["momentum"])
+                    g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
+                    g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                    scale = (max(1.0, p.size(-2) / p.size(-1)) ** 0.5)
+                    p.add_(g, alpha=-group["lr"] * scale)
+                # Replicate updated parameters to all ranks
+                ag_input = params[owner_idx] if owner_idx < len(params) else zero_buffer
+                ag_output = params[base_i:base_i + world_size]
+                ag_output.extend([torch.empty_like(zero_buffer) for _ in range(world_size - len(ag_output))]) # pad
+                work = dist.all_gather(ag_output, ag_input, async_op=True).get_future()
+                all_gather_futures.append(work)
+
+        # Wait for all work to finish
+        torch.futures.collect_all(all_gather_futures).wait()
