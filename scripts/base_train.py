@@ -54,11 +54,9 @@ for k,v in list(globals().items()):
         user_config[k] = v
 # -----------------------------------------------------------------------------
 
-# NOTE: Currently this is single GPU setup
-
 # Compute init
 device_type = autodetect_device_type() if device_type == "" else device_type
-device, ddp_rank, ddp_local_rank, ddp_world_size = compute_init(device_type=device_type)
+device, rank, local_rank, ddp_world_size = compute_init(device_type=device_type)
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
@@ -70,23 +68,23 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", 
 tokenizer = get_tokenizer()
 token_bytes = get_token_bytes(device=device)
 vocab_size = tokenizer.get_vocab_size()
-print(f"Vocab size: {vocab_size:,}")
+print0(f"Vocab size: {vocab_size:,}")
 
 # Model kwargs are 
 num_layers = depth
 model_dim = depth * 64 # aspect ratio of 64
 num_heads = max(1, (model_dim + 127) // 128) # head dim 128
 num_kv_heads = num_heads # 1:1 -> GQA disabled
-print(f"num_layers: {num_layers}")
-print(f"model_dim: {model_dim}")
-print(f"num_heads: {num_heads}")
-print(f"num_kv_heads: {num_kv_heads}")
+print0(f"num_layers: {num_layers}")
+print0(f"model_dim: {model_dim}")
+print0(f"num_heads: {num_heads}")
+print0(f"num_kv_heads: {num_kv_heads}")
 
 # figure out if we need gradient accumulation to reach the desired total batch size
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration
 grad_accum_steps = total_batch_size // tokens_per_fwdbwd
-print(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
-print(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
+print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
+print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Model
@@ -111,7 +109,7 @@ output_dirname = model_tag if model_tag else f"d{depth}"
 checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
 resuming = resume_from_step != -1
 if resuming:
-    print(f"Resuming optimization from step {resume_from_step}")
+    print0(f"Resuming optimization from step {resume_from_step}")
     model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, resume_from_step, device, load_optimizer=True)
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data # free up this memory after copy
@@ -119,28 +117,28 @@ if resuming:
 orig_model = model # original uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change)
 model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
 num_params = sum(p.numel() for p in model.parameters())
-print(f"Number of parameters: {num_params:,}")
+print0(f"Number of parameters: {num_params:,}")
 num_flops_per_token = model.estimate_flops()
-print(f"Estimated FLOPs per token: {num_flops_per_token}")
+print0(f"Estimated FLOPs per token: {num_flops_per_token}")
 
 # Calculate the number of iterations
 assert num_iterations > 0 or target_flops > 0 or target_param_data_ratio > 0
 if num_iterations > 0:
-    print(f"Using user-provided number of iterations: {num_iterations}")
+    print0(f"Using user-provided number of iterations: {num_iterations}")
 elif target_flops > 0:
     # calculate the number of iterations from the target flops
     num_iterations = round(target_flops / (num_flops_per_token * total_batch_size))
-    print(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
+    print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
 elif target_param_data_ratio > 0:
     target_tokens = num_params * target_param_data_ratio
     num_iterations = target_tokens // total_batch_size
-    print(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
+    print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
 else:
     raise ValueError("No target horizon specified")
 total_tokens = total_batch_size * num_iterations
-print(f"Total number of training tokens: {total_tokens:,}")
-print(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
-print(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
+print0(f"Total number of training tokens: {total_tokens:,}")
+print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
+print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (Muon for Linear layers, AdamW for embedding and lm_head)
@@ -212,7 +210,7 @@ while True:
         eval_steps = eval_tokens // (device_batch_size * max_seq_len)
         with autocast_ctx:
             val_bpb = evaluate_bpb(model, val_loader, eval_steps, token_bytes)
-        print(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
+        print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
         wandb_run.log({
@@ -230,7 +228,7 @@ while True:
         model.eval()
         with autocast_ctx:
             results = evaluate_model(orig_model, tokenizer, device, max_per_task=core_metric_max_per_task)
-        print(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
+        print0(f"Step {step:05d} | CORE metric: {results['core_metric']:.4f}")
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -257,7 +255,7 @@ while True:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
-            print(tokenizer.decode(sample[0]))
+            print0(tokenizer.decode(sample[0]))
         model.train()
 
     # save checkpoint ath the end of the run or every save_every steps
@@ -332,7 +330,7 @@ while True:
     if step > 10:
         total_training_time += dt # only count the time after the first 10 steps
     print_grad_norm = f" grad norm: {grad_norm:.4f} |" if grad_clip_enabled else ""
-    print(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} |{print_grad_norm} lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} |{print_grad_norm} lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | total time: {total_training_time/60:.2f}m")
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -352,9 +350,9 @@ while True:
     step += 1
 
 
-print(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
-print(f"Total training time: {total_training_time/60:.2f}m")
-print(f"Minimum validation bpb: {min_val_bpb:.4f}")
+print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")
+print0(f"Total training time: {total_training_time/60:.2f}m")
+print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
 # Log to report
 get_report().log(section="Base model training", data=[
@@ -365,7 +363,7 @@ get_report().log(section="Base model training", data=[
         "Calculated number of iterations": num_iterations,
         "Number of training tokens": total_tokens,
         "Tokens : Params ratio": total_batch_size * num_iterations / num_params,
-        "DDP world size": 1,
+        "DDP world size": ddp_world_size,
         "warmup_ratio": warmup_ratio,
         "warmdown_ratio": warmdown_ratio,
         "final_lr_frac": final_lr_frac,
