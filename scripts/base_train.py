@@ -56,7 +56,7 @@ for k,v in list(globals().items()):
 
 # Compute init
 device_type = autodetect_device_type() if device_type == "" else device_type
-device, rank, local_rank, ddp_world_size = compute_init(device_type=device_type)
+ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type=device_type)
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 

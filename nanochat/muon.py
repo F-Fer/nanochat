@@ -3,9 +3,10 @@ Muon optomizer from Keller et al.
 """
 import torch
 from torch import Tensor
-from torch.distributed import dist
+import torch.distributed as dist
 
-@torch.compile
+# TODO: torch.conpile fails here -> torch._dynamo.exc.InternalTorchDynamoError: CppCompileError: C++ compile error
+# @torch.compile 
 def zeropower_via_newtonschulz5(G: Tensor, steps: int):
     assert G.ndim >= 2 # batched Muon
     a, b, c = (3.4445, -4.7750,  2.0315)
