@@ -3,10 +3,11 @@ from collections import deque
 import torch
 import pyarrow.parquet as pq
 
+from nanochat.common import get_dist_info
 from nanochat.dataset import list_parquet_files
 from nanochat.tokenizer import get_tokenizer
 
-def tokenizing_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", resume_state_dict=None):
+def tokenizing_distributed_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device="cuda", resume_state_dict=None):
     """
     Stream pretraining text from parquet files, tokenize, yield training batches.
 
@@ -20,6 +21,8 @@ def tokenizing_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenize
     Perfect state resumption is possible but would be a lot more bloated, probably not worth it atm.
     """
     assert split in ["train", "val"], "split must be 'train' or 'val'"
+
+    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
 
     def document_batches():
         parquet_paths = list_parquet_files()
@@ -35,19 +38,21 @@ def tokenizing_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenize
                 pf = pq.ParquetFile(filepath)
                 # Start from resume point if resuming on same file
                 if first_pass and (resume_rg_idx is not None) and (pq_idx == resume_pq_idx):
-                    rg_idx = resume_rg_idx + 1 # advance by 1 so that we definitely dont repeat data after resuming
+                    base_idx = resume_rg_idx // ddp_world_size
+                    base_idx += 1 # advance by 1 so that we definitely dont repeat data after resuming
+                    rg_idx = base_idx * ddp_world_size + ddp_rank
                     if rg_idx >= pf.num_row_groups:
                         pq_idx += 1
                         continue
                     resume_rg_idx = None
                 else:
-                    rg_idx = 0
+                    rg_idx = ddp_rank
                 while rg_idx < pf.num_row_groups: # iterate over row groups
                     rg = pf.read_row_group(rg_idx)
                     batch = rg.column('text').to_pylist()
                     for i in range(0, len(batch), tokenizer_batch_size):
                         yield batch[i:i + tokenizer_batch_size], (pq_idx, rg_idx)
-                    rg_idx += 1
+                    rg_idx += ddp_world_size
                 pq_idx += 1
             first_pass = False
     
@@ -78,3 +83,8 @@ def tokenizing_data_loader_with_state(B, T, split, tokenizer_threads=4, tokenize
         targets = targets_cpu.view(B, T).to(device=device, non_blocking=use_cuda_optimization)
         state_dict = {"pq_idx": pq_idx, "rg_idx": rg_idx}
         yield inputs, targets, state_dict
+
+def tokenizing_distributed_data_loader(*args, **kwargs):
+    # helper function that only emits the inputs/targets and not the state_dict
+    for inputs, targets, state_dict in tokenizing_distributed_data_loader_with_state(*args, **kwargs):
+        yield inputs, targets

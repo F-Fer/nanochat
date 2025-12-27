@@ -8,7 +8,7 @@ import torch
 
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import load_checkpoint, save_checkpoint
-from nanochat.dataloader import tokenizing_data_loader_with_state
+from nanochat.dataloader import tokenizing_distributed_data_loader_with_state
 from nanochat.common import autodetect_device_type, DummyWandb, compute_init, get_base_dir, print0
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
@@ -156,9 +156,9 @@ if resuming:
 # Initialize the DataLoader
 tokens_dir = os.path.join(base_dir, "tokenized_data")
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = tokenizing_data_loader_with_state(B=device_batch_size, T=max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
+train_loader = tokenizing_distributed_data_loader_with_state(B=device_batch_size, T=max_seq_len, split="train", device=device, resume_state_dict=dataloader_resume_state_dict)
 def build_val_loader():
-    return tokenizing_data_loader_with_state(B=device_batch_size, T=max_seq_len, split="val", device=device)
+    return tokenizing_distributed_data_loader_with_state(B=device_batch_size, T=max_seq_len, split="val", device=device)
 x, y, dataloader_state_dict = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
