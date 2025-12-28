@@ -298,3 +298,38 @@ class GPT(nn.Module):
             ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
+
+    def print_model_info(self):
+        print0(self)
+        print0()
+
+        # Embedding and unembedding matrices
+        n_params_total = sum(p.numel() for p in self.parameters())
+        print0(f"Number of parameters in total: {n_params_total:,}")
+        wte = self.transformer.wte
+        n_params_embedding = sum(p.numel() for p in wte.parameters())
+        print0(f"Number of parameters for embedding matrix: {n_params_embedding:,}; {(n_params_embedding / n_params_total) * 100:.1f}%")
+        unembedding_matrix = self.lm_head
+        n_params_unembedding = sum(p.numel() for p in unembedding_matrix.parameters())
+        print0(f"Number of parameters for unembedding matrix: {n_params_unembedding:,}; {(n_params_unembedding / n_params_total) * 100:.1f}%")
+        n_params_embd_total = n_params_embedding + n_params_unembedding
+        print0(f"Number of parameters for embedding + unembedding: {n_params_embd_total:,}; {(n_params_embd_total / n_params_total) * 100:.1f}%")
+        print0()
+
+        # transformer body
+        n_layer = self.config.n_layer
+        block = self.transformer.h[0]
+        n_params_per_block = sum(p.numel() for p in block.parameters())
+        n_params_blocks_total = n_params_per_block * n_layer
+        print0(f"Number of parameters for transformer body: {n_params_blocks_total:,}; {(n_params_blocks_total / n_params_total) * 100:.1f}%")
+
+        # per layer
+        n_params_per_attn_block = sum(p.numel() for p in block.attn.parameters())
+        n_params_per_mlp_block = sum(p.numel() for p in block.mlp.parameters())
+        n_params_attn_total = n_params_per_attn_block * self.config.n_layer
+        n_params_mlp_total = n_params_per_mlp_block * self.config.n_layer
+        print0(f"Number of parameters for self-attn in total: {n_params_attn_total:,}; {(n_params_attn_total / n_params_total) * 100:.1f}%")
+        print0(f"Number of parameters for mlp in total: {n_params_mlp_total:,}; {(n_params_mlp_total / n_params_total) * 100:.1f}%")
+        print0(f"Number of parameters for self-attn per block: {n_params_per_attn_block:,}")
+        print0(f"Number of parameters for mlp per block: {n_params_per_mlp_block:,}")
+        print0()

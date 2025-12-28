@@ -107,6 +107,10 @@ with torch.device("meta"):
     model : GPT = GPT(model_config)
 model.to_empty(device=device)
 model.init_weights()
+model.print_model_info()
+
+import sys
+sys.exit()
 
 # If we are resuming overwrite the models parameters with the ones from the checkpoint
 base_dir = get_base_dir()
