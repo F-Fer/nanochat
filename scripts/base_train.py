@@ -9,7 +9,7 @@ import torch
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import load_checkpoint, save_checkpoint
 from nanochat.dataloader import tokenizing_distributed_data_loader_with_state
-from nanochat.common import autodetect_device_type, DummyWandb, compute_init, get_base_dir, print0
+from nanochat.common import autodetect_device_type, DummyWandb, compute_cleanup, compute_init, get_base_dir, print0
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from nanochat.report import get_report
@@ -28,7 +28,7 @@ num_iterations = -1
 target_flops = -1
 target_param_data_ratio = 20
 # Optimization
-device_batch_size = 12
+device_batch_size = 8
 total_batch_size = 524_288 # Total desired batch size (in tokens)
 embedding_lr = 0.2 # Learning rate for the embedding parameters (Adam)
 unembedding_lr = 0.004 # Learning rate for the unembedding parameters (Adam)
@@ -58,6 +58,7 @@ for k,v in list(globals().items()):
 device_type = autodetect_device_type() if device_type == "" else device_type
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init(device_type=device_type)
 autocast_ctx = torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16) if device_type == "cuda" else nullcontext()
+synchronize = torch.cuda.synchronize if device_type == "cuda" else lambda: None
 get_max_memory = torch.cuda.max_memory_allocated if device_type == "cuda" else lambda: 0
 
 # wandb logging init
@@ -82,8 +83,12 @@ print0(f"num_kv_heads: {num_kv_heads}")
 
 # figure out if we need gradient accumulation to reach the desired total batch size
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration
-grad_accum_steps = total_batch_size // tokens_per_fwdbwd
+world_tokens_per_fwdbwd = tokens_per_fwdbwd * ddp_world_size
 print0(f"Tokens / micro-batch / rank: {device_batch_size} x {max_seq_len} = {tokens_per_fwdbwd:,}")
+print0(f"Tokens / micro-batch: {world_tokens_per_fwdbwd:,}")
+print(f"total_batch_size: {total_batch_size}")
+assert total_batch_size % world_tokens_per_fwdbwd == 0
+grad_accum_steps = total_batch_size // tokens_per_fwdbwd
 print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {grad_accum_steps}")
 
 # -----------------------------------------------------------------------------
@@ -287,6 +292,8 @@ while True:
 
     # -----------------------------------------------------------------------------
     # single training step
+    synchronize()
+
     t0 = time.time()
     train_loss_accum = 0.0
     for micro_step in range(grad_accum_steps):
@@ -314,6 +321,9 @@ while True:
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
+
+    synchronize()
+
     t1 = time.time()
     dt = t1 - t0
     # -----------------------------------------------------------------------------
@@ -381,3 +391,4 @@ get_report().log(section="Base model training", data=[
 
 # cleanup
 wandb_run.finish() # wandb run finish
+compute_cleanup()

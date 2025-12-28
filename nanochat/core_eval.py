@@ -10,6 +10,8 @@ import random
 from jinja2 import Template
 import torch
 
+# TODO: make this dist capable
+
 # -----------------------------------------------------------------------------
 # Prompt rendering utilities
 
