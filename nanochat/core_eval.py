@@ -9,8 +9,7 @@ import random
 
 from jinja2 import Template
 import torch
-
-# TODO: make this dist capable
+import torch.distributed as dist
 
 # -----------------------------------------------------------------------------
 # Prompt rendering utilities
@@ -245,11 +244,21 @@ def evaluate_example(idx, model, tokenizer, data, device, task_meta):
 def evaluate_task(model, tokenizer, data, device, task_meta):
     """
     This function is responsible for evaluating one task across many examples.
+    Also handles dispatch to all processes if the script is run with torchrun.
     """
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
     correct = torch.zeros(len(data), dtype=torch.float32, device=device)
-    for idx in range(len(data)):
+    # stride the examples based on rank
+    for idx in range(rank, len(data), world_size):
         is_correct = evaluate_example(idx, model, tokenizer, data, device, task_meta)
         correct[idx] = float(is_correct)
+
+    # sync across processes
+    if world_size > 1:
+        dist.barrier()
+        dist.all_reduce(correct, op=dist.ReduceOp.SUM)
+    
     # compute the mean
     mean_correct = correct.mean().item()
     return mean_correct
