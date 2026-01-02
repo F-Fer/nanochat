@@ -2,6 +2,14 @@
 
 ## Quick Start
 
+### Tokenizer Training
+
+To train a new BPE tokenizer on your dataset:
+
+```bash
+uv run python -m scripts.tok_train
+```
+
 ### Training
 
 To start a base model training run:
@@ -11,14 +19,6 @@ uv run python -m scripts.base_train --run "my-first-run" --depth 4
 ```
 
 You can customize the training horizon using iterations, target FLOPs, or parameter-to-data ratios.
-
-### Tokenizer Training
-
-To train a new BPE tokenizer on your dataset:
-
-```bash
-uv run python -m scripts.tok_train
-```
 
 ## Project Structure
 
